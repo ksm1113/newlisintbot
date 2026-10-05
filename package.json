@@ -1,0 +1,14 @@
+{
+  "name": "newlistingbot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NewListings file-based event handoff",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start:watcher": "node --env-file=.env client.cjs",
+    "start:info": "node info.cjs",
+    "info:once": "node info.cjs --once",
+    "test": "node --test"
+  },
+  "dependencies": { "ws": "^8.21.3" }
+}
