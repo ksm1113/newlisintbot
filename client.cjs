@@ -4,7 +4,7 @@ const { acquireLock } = require("./lib/lock.cjs");
 const { JsonlWriter } = require("./lib/jsonl.cjs");
 const { normalizeListing } = require("./lib/listing-event.cjs");
 
-async function main({ root, key = process.env.NLF_KEY, WebSocketImpl = WebSocket, installSignalHandlers = true } = {}) {
+async function main({ root, key = process.env.NLF_KEY, WebSocketImpl = WebSocket, installSignalHandlers = true, logger = console, onMessage = () => {} } = {}) {
   if (!key) throw new Error("Set NLF_KEY before starting the client.");
   const paths = pathsFor(root);
   await ensureDirectories(paths);
@@ -25,7 +25,7 @@ async function main({ root, key = process.env.NLF_KEY, WebSocketImpl = WebSocket
     stopping = true;
     clearTimeout(reconnectTimer);
     if (error) {
-      console.error(`[감시부] 중단: ${error.message}`);
+      logger.error(`[감시부] 중단: ${error.message}`);
       process.exitCode = 1;
     }
     socket?.terminate();
@@ -33,7 +33,7 @@ async function main({ root, key = process.env.NLF_KEY, WebSocketImpl = WebSocket
       try { await writer.close(); }
       finally { await releaseLock(); }
     })().catch(closeError => {
-      console.error(`[감시부] 종료 오류: ${closeError.message}`);
+      logger.error(`[감시부] 종료 오류: ${closeError.message}`);
       process.exitCode = 1;
     });
     return shutdownPromise;
@@ -53,7 +53,9 @@ async function main({ root, key = process.env.NLF_KEY, WebSocketImpl = WebSocket
       let message;
       try { message = JSON.parse(data.toString()); }
       catch { void shutdown(new Error("Invalid JSON response.")); return; }
-      console.log(JSON.stringify(message, null, 2));
+      try { onMessage(message); }
+      catch (error) { void shutdown(error); return; }
+      logger.log(JSON.stringify(message, null, 2));
       if (message?.type === "success" && message.code === "READY") {
         retryMs = 1000;
       } else if (message?.type === "error") {
@@ -63,14 +65,14 @@ async function main({ root, key = process.env.NLF_KEY, WebSocketImpl = WebSocket
       const event = normalizeListing(message);
       if (event) {
         writer.append(event).then(() => {
-          console.log(`[감시부] 상장 소식 저장: ${event.exchange || "?"} / ${event.assets.map(asset => asset.symbol || "?").join(", ") || "unknown"}`);
+          logger.log(`[감시부] 상장 소식 저장: ${event.exchange || "?"} / ${event.assets.map(asset => asset.symbol || "?").join(", ") || "unknown"}`);
         }).catch(error => { void shutdown(error); });
       }
     });
 
     ws.on("unexpected-response", (_request, response) => {
       const status = response.statusCode;
-      console.error("Connection rejected: HTTP", status);
+      logger.error("Connection rejected: HTTP", status);
       stop = status < 500 && status !== 408 && status !== 429;
       const retryAfter = response.headers["retry-after"] || "";
       minimumWaitMs = /^\d+$/.test(retryAfter)
@@ -79,7 +81,7 @@ async function main({ root, key = process.env.NLF_KEY, WebSocketImpl = WebSocket
       response.resume();
       ws.terminate();
     });
-    ws.on("error", error => console.error(error.message));
+    ws.on("error", error => logger.error(error.message));
     ws.on("close", code => {
       if (stopping) return;
       if (stop || code === 1008) {
@@ -87,7 +89,7 @@ async function main({ root, key = process.env.NLF_KEY, WebSocketImpl = WebSocket
         return;
       }
       const waitMs = Math.max(retryMs, minimumWaitMs) + Math.random() * 250;
-      console.log(`Disconnected. Reconnecting in ${Math.ceil(waitMs)} ms...`);
+      logger.log(`Disconnected. Reconnecting in ${Math.ceil(waitMs)} ms...`);
       retryMs = Math.min(retryMs * 2, 30000);
       reconnectTimer = setTimeout(connect, waitMs);
     });
@@ -97,7 +99,7 @@ async function main({ root, key = process.env.NLF_KEY, WebSocketImpl = WebSocket
     process.once("SIGINT", () => { void shutdown(); });
     process.once("SIGTERM", () => { void shutdown(); });
   }
-  console.log(`[감시부] 신규상장 저장 파일: ${paths.listings}`);
+  logger.log(`[감시부] 신규상장 저장 파일: ${paths.listings}`);
   try { connect(); }
   catch (error) { await shutdown(error); }
   return { shutdown, flush: () => writer.tail, paths };

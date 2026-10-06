@@ -1,0 +1,10 @@
+{
+  "venues": ["binance", "bybit", "okx", "bitget", "gate", "hyperliquid", "aster", "variational", "lighter"],
+  "refresh_interval_ms": 300000,
+  "cache_ttl_ms": 600000,
+  "request_timeout_ms": 10000,
+  "segment_timeout_ms": 60000,
+  "concurrency": 3,
+  "lookup_retry_ms": 30000,
+  "lookup_max_attempts": 5
+}

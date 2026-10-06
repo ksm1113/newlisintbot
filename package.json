@@ -8,6 +8,14 @@
     "start:watcher": "node --env-file=.env client.cjs",
     "start:info": "node info.cjs",
     "info:once": "node info.cjs --once",
+    "info:lookup-once": "node info.cjs --lookup-once",
+    "catalog:once": "node catalog.cjs --once",
+    "start:catalog": "node catalog.cjs",
+    "check:info": "node scripts/check-info.cjs",
+    "check:catalog": "node scripts/check-info.cjs --live",
+    "check:listing": "node scripts/check-listing.cjs",
+    "check:replay": "node scripts/replay.cjs",
+    "check:feed": "node --env-file=.env scripts/check-feed.cjs",
     "test": "node --test"
   },
   "dependencies": { "ws": "^8.21.3" }
