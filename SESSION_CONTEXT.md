@@ -4,12 +4,12 @@
 
 ## 현재 중단점과 사용자 지시
 
-- 최신 개발 작업: 다른 거래소도 중단·거래 제한 페어를 집계하는지 검토하고 수정 완료.
-- 마지막 전체 node --test 결과 **168/168 통과**. 이후 사용자가 **“다 만들었으면 테스트는 일단 멈춰봐”**라고 요청했다. 테스트·라이브 검사를 추가 실행하지 말고 후속 사용자 지시를 따른다. 이번 문서 정리에서는 코드 수정·테스트·거래소 API 실행을 하지 않았다.
-- 최신 요청: 지금까지의 작업을 README에 기록하고 다른 모델이 이어받을 기록을 남긴 뒤 /compact. README와 이 파일에 인수인계를 저장했다. 현재 세션에는 이 채팅의 compact를 실행하는 도구가 없어 실행 완료로 보고하지 않는다. 사용자 입력창의 /compact 실행이 남아 있다.
+- 최신 작업(2026-10-06): **현물 경로 판정에서 CA 조건 제거.** 티커로 찾은 현물의 출금망이 상장 거래소 입금망(그 거래소 네트워크 API)과 같은 체인이면 통과. 상장 거래소 입금 열림 여부는 기록만. CA는 DEX 풀 조회에서만 사용. 업비트 전용이 아니라 상장 거래소 공통. 전체 테스트 **168/168 통과**.
+- 다음 작업(합의됨): 빗썸 입출금망 어댑터. 키 없는 공개 API `https://api.bithumb.com/public/assetsstatus/multichain/ALL`, 망 이름 `/public/network-info`(ETH, BSC, ARB_ETH, OP_ETH, BASE_ETH, POL, SOL, BTC, TRX). 그 뒤 업비트 키 연결 후 실제 net_type 보고 체인 매핑 확장.
+- "테스트 멈춰"는 그때 한 번만의 요청이었다. 평소처럼 변경 후 테스트로 검증한다.
+- 작업물은 커밋·push됨(`ksm1113/newlisintbot`, PUBLIC). 기존 변경을 되돌리지 않는다. .env·키는 출력하거나 문서·로그에 기록하지 않는다.
 - 사용자 설명은 한국어로 핵심만 짧고 쉽게. 가벼운 커뮤니티 말투 가능. 긴 설명·추가 대기·과한 구조를 싫어한다.
-- 설계를 합의한 범위에서 구현한다. 새 봇·프로세스·큐·전체 구조를 더 늘리거나 주문·전송을 임의로 구현하지 않는다. 기존 캐시 → 비교 → 결과 저장의 단순한 흐름을 원한다. 현재 코드를 대규모로 줄이는 리팩터링은 수행하지 않았다.
-- 작업물은 커밋되지 않은 상태다. 기존 변경을 되돌리지 않는다. .env·키는 출력하거나 문서·로그에 기록하지 않는다.
+- 설계를 합의한 범위에서 구현한다. 새 봇·프로세스·큐·전체 구조를 더 늘리거나 주문·전송을 임의로 구현하지 않는다. 기존 캐시 → 비교 → 결과 저장의 단순한 흐름을 원한다.
 
 ## 확정된 설계
 
@@ -19,7 +19,7 @@
 - 코인을 미리 예측하거나 전 세계 토큰·풀을 매핑하지 않는다. 선택한 거래소의 현재 상품 목록만 미리 받는다. 처음 보는 코인 신원·CA·풀은 이벤트 이후 확인하고 검증된 근거를 재사용한다.
 - 현물·무기한 후보는 **원천 quote가 USDT/USDC이고 market_status=ACTIVE**인 상품만. 현물은 현물 전용 API, 무기한은 무기한 전용 API에서 읽는다. All 화면이나 전체 카탈로그 개수를 현물 개수로 설명하지 않는다.
 - 티커는 공백 정리·대소문자 무시 비교만 한다. 1000·1M·k 배수 접두사, quote·담보 통화를 추정으로 연결하지 않는다. 티커 일치 후보와 동일 코인 검증을 구분한다.
-- 현물 매수처 출금망과 신규 상장 거래소 입금망이 동일하고, 같은 체인·전체 CA·상태 조건까지 확인해야 경로 필터를 통과한다. 미조회·미검증은 보류한다.
+- 현물 매수처 출금망과 신규 상장 거래소 입금망이 같은 체인이면 경로 필터를 통과한다(CA 비교 없음, 상장 거래소 입금 열림 여부는 기록만). 미조회는 보류한다.
 - DEX 현물의 목표는 EVM 계열+Solana. 개별 EVM 네트워크·실행 DEX는 아직 미확정이며 풀 조회도 미구현이다.
 
 ## 구현된 흐름과 파일
@@ -48,7 +48,7 @@ NewListings → client.cjs → data/listings.jsonl
 - 시장 후보 파일 저장은 신원·네트워크 API를 기다리지 않는다. 별도 작업이 신원 cache MISS인 업비트 공식 공지를 API로 확인한다. 런타임은 거래소 홈페이지 UI를 열지 않는다.
 - Upbit 자동 파서는 **단일 코인·Ethereum 공지 형식만** 지원. 다중 종목·다른 망·미지 형식·충돌 CA는 보류. 빗썸 및 다른 거래소 공지 자동 식별은 미구현.
 - 신원 anchor는 날짜·공식 근거·코인/거래소·체인/전체 CA·입금망에 연결. NOTICE는 공지 URL에 묶이고 VENUE_ASSET는 검증된 거래소 자산 근거 재사용. 충돌·만료·미지 체인은 보류.
-- 후보 검색 결과는 asset_id:null, identity_status:UNVERIFIED. 신원/경로 평가 결과만 별도로 VERIFIED를 기록할 수 있다. **모든 단계 trading_allowed:false**, 실제 주문·출금·전송 없음.
+- 후보 검색 결과는 asset_id:null, identity_status:UNVERIFIED. 공식 CA 근거가 있으면 신원 정보로 VERIFIED를 기록하지만 경로 통과와는 무관하다. 결과 상태는 ROUTE_FILTER_EVALUATED. **모든 단계 trading_allowed:false**, 실제 주문·출금·전송 없음.
 - 상세 근거·인증 환경변수 이름·한계는 docs/IDENTITY_NETWORKS.md, 시장 원천은 docs/MARKET_DISCOVERY.md 참고. 비밀 값은 문서에 없다.
 
 ## 최근 수정 — 거래 제한 페어
@@ -91,9 +91,9 @@ NMR 알림 링크: https://newlistings.pro/listings/upbit/nmr-104e6va74go?utm_so
 
 - LOOKUP_PENDING은 접수이며 실제 조회 완료가 아니다. COMPLETE는 후보 검색 완료이며 동일 코인·경로 검증 완료가 아니다.
 - LookupWorker terminal은 COMPLETE·WAITING_IDENTITY. 목록 갱신·필터 변경·--retry-failed는 기존 완료 결과를 재검색/재작성하지 않는다. 과거 검사18개를 새 필터가 자동 수정했다고 설명하지 않는다. 재처리 정책은 별도 합의 전 커서/job 삭제로 우회하지 않는다.
-- 별도 신원·경로 결과는 시장 결과·네트워크/신원 근거·만료 변화에 따라 재평가. NETWORK_COMPATIBLE_HELD는 CA·망 일치에 불과하고 FILTER_PASSED도 캐시 조건 필터이지 거래 허가가 아니다.
+- 별도 신원·경로 결과는 시장 결과·네트워크/신원 근거·만료 변화에 따라 재평가. NETWORK_COMPATIBLE_HELD는 체인 일치 후 다른 조건으로 보류된 것이고 FILTER_PASSED도 캐시 조건 필터이지 거래 허가가 아니다.
 - Binance/Bybit/OKX/Upbit 인증 네트워크 adapter는 오프라인 검증만 했다. AUTH_REQUIRED는 미조회이며 미지원이 아니다. Bitget/Gate 공개 네트워크는 이전 NMR 검사에서 실제 조회.
-- Upbit wallet 상태 API는 수 분 지연될 수 있는 참고값이라 키를 붙여도 그것만으로 현재 상태를 자동 통과시키지 않는다. 무기한은 공식 기초자산/지수 매핑 전까지 UNVERIFIED이며 현물 전송 필터는 NOT_APPLICABLE.
+- Upbit wallet 상태 API는 수 분 지연될 수 있는 참고값이다. 입금 상태는 통과 조건이 아니라 기록만 한다. 업비트 체인 매핑은 ETH/SOL/BTC/TRX 4개뿐. 무기한은 공식 기초자산/지수 매핑 전까지 UNVERIFIED이며 현물 전송 필터는 NOT_APPLICABLE.
 - 운영 data/listings.jsonl, data/info-results.jsonl은 인수인계 시 확인한 결과 각각0바이트. 실제 신규상장 원본 수신·전 구간 지연 실측 완료를 주장하지 않는다. 격리 검사는 data/checks/만 사용.
 - data/state 함께 보존. 커서·완료 결과 손상·파일 축소/교체는 중단한다. job5만건 상한, 자동 기록 보관/순환 미구현. 같은 PC의 로컬 파일 전달이며 OneDrive PC간 전달·피드 단절 중 자동 복구 미지원.
 
@@ -108,12 +108,12 @@ node info.cjs --lookup-once --retry-failed
 npm run catalog:once       # 목록만. start:info와 같은 잠금이므로 동시 실행 금지
 ```
 
-Node.js22 이상. config/markets.json: 갱신5분/TTL10분/HTTP timeout10초/상품군 timeout60초/동시상품군3/조회재시도30초·최대5회. 같은 호스트는 직렬·최소200ms간격. npm test, check:info, check:catalog, check:listing, check:replay, check:feed 사용법은 README에 있고 현재 사용자 요청으로 실행을 중단한 상태다.
+Node.js22 이상. config/markets.json: 갱신5분/TTL10분/HTTP timeout10초/상품군 timeout60초/동시상품군3/조회재시도30초·최대5회. 같은 호스트는 직렬·최소200ms간격. npm test, check:info, check:catalog, check:listing, check:replay, check:feed 사용법은 README에 있다.
 
 ## 남은 일 — 다음 구현 항목은 사용자와 선택
 
-1. 인증 네트워크 API 실제 계정 범위 연결·검증. 비밀 값 노출 금지.
-2. 빗썸 등 다른 공지 형식·체인·여러 종목의 공식 신원 식별 지원.
+1. 빗썸 입출금망 어댑터(공개 API, 합의됨).
+2. 인증 네트워크 API 실제 계정 범위 연결·검증, 업비트 체인 매핑 확장. 비밀 값 노출 금지.
 3. 무기한 기초자산·지수·배수 상품의 검증된 매핑.
 4. EVM/Solana DEX 현물 풀·프로토콜 검증·실제 금액 견적. 체인/DEX부터 확정.
 5. 이후 전략·한도 합의 → 판단부·모의 실행 → 매매부 → 별도 전송부. 지금 주문·전송 미구현.

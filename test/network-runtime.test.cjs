@@ -72,11 +72,12 @@ test('durable enrichment publishes local candidates before slow identity lookup,
   let worker=await EnrichmentWorker.open({root,networkCatalog,resolveIdentity:resolver,now:()=>NOW});
   await worker.drain();assert.equal(calls,0);
   const output=path.join(root,'data','enrichment-results',`${'a'.repeat(64)}.json`);
-  assert.equal(JSON.parse(await fs.readFile(output,'utf8')).status,'WAITING_OFFICIAL_IDENTITY');
+  const first=JSON.parse(await fs.readFile(output,'utf8'));
+  assert.equal(first.status,'ROUTE_FILTER_EVALUATED');assert.equal(first.assets[0].anchor,null);
   await worker.close();worker=await EnrichmentWorker.open({root,networkCatalog,resolveIdentity:resolver,now:()=>NOW});
   await worker.resolveQueued();await worker.drain();assert.equal(calls,1);
   const result=JSON.parse(await fs.readFile(output,'utf8'));
-  assert.equal(result.status,'IDENTITY_AND_ROUTE_FILTER_EVALUATED');assert.equal(result.eligible_spot_count,0);assert.equal(result.trading_allowed,false);
+  assert.equal(result.status,'ROUTE_FILTER_EVALUATED');assert.equal(result.assets[0].identity_status,'LISTED_ASSET_VERIFIED');assert.equal(result.eligible_spot_count,0);assert.equal(result.trading_allowed,false);
   const before=(await fs.stat(output)).mtimeMs;await worker.resolveQueued();await worker.drain();assert.equal(calls,1);assert.equal((await fs.stat(output)).mtimeMs,before);
   await worker.close();
 });

@@ -214,7 +214,7 @@ test('default enrichment lane cannot delay market output while network metadata 
   const output=path.join(f.root,'data','enrichment-results',`${event.event_id}.json`);
   const deadline=Date.now()+3000;let enriched;
   while(Date.now()<deadline){try{enriched=await f.json(output);break;}catch(error){if(error.code !== 'ENOENT')throw error;}await delay(20);}
-  assert.equal(enriched?.status,'WAITING_OFFICIAL_IDENTITY');assert.equal(enriched?.eligible_spot_count,0);
+  assert.equal(enriched?.status,'ROUTE_FILTER_EVALUATED');assert.equal(enriched?.eligible_spot_count,0);
   await runtime.shutdown();assert.equal(runtime.networks.closed,true);assert.equal(runtime.enrichment.closed,true);
   for(const name of ['networks.lock','enrichment.lock'])await assert.rejects(fs.stat(path.join(f.root,'state',name)),{code:'ENOENT'});
 });

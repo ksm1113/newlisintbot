@@ -2,13 +2,15 @@
 
 2026-10-06 구현. 주문·출금·전송은 없다.
 
-> 최신 정책·검증 개수는 [README](../README.md)와 [인수인계](../SESSION_CONTEXT.md)를 우선한다. 아래 NMR 현물3개 페어는 초기 CA·망 검사의 대상이며 현재 USDT/USDC·ACTIVE 시장 후보 개수가 아니다. 매수 중단·OKX non-normal 룰은 경로 필터에서도 보류한다. 마지막 전체 테스트168/168 통과 이후 추가 테스트는 사용자 요청으로 중단했다.
+> 최신 정책·검증 개수는 [README](../README.md)와 [인수인계](../SESSION_CONTEXT.md)를 우선한다. 아래 NMR 현물3개 페어는 초기 CA·망 검사의 대상이며 현재 USDT/USDC·ACTIVE 시장 후보 개수가 아니다. 매수 중단·OKX non-normal 룰은 경로 필터에서도 보류한다.
+>
+> **2026-10-06 규칙 변경:** CEX 현물 경로는 CA 없이 **티커 + 체인**으로 판정한다. 매수처 출금망과 상장 거래소의 입금망(그 거래소 네트워크 API 목록)이 같은 체인이면 통과한다. 상장 거래소의 현재 입금 열림 여부는 통과 조건이 아니며 기록만 한다. CA는 DEX 풀 조회에서만 쓰고, 공식 공지 CA 근거는 신원 정보(`VERIFIED`)로만 첨부한다.
 
 ## 속도와 역할
 
-시장 목록과 통화별 네트워크 목록은 별도 캐시로 5분마다 갱신한다. 이벤트가 들어오면 기존 `LookupWorker`가 로컬 시장 후보를 바로 기록한다. `EnrichmentWorker`는 그 결과 파일을 읽어 로컬 CA·체인·입출금 상태를 평가한다. 시장 결과 생성은 공지 확인·네트워크 API를 기다리지 않는다.
+시장 목록과 통화별 네트워크 목록은 별도 캐시로 5분마다 갱신한다. 이벤트가 들어오면 기존 `LookupWorker`가 로컬 시장 후보를 바로 기록한다. `EnrichmentWorker`는 그 결과 파일을 읽어 로컬 체인·출금 상태와 상장 거래소 입금망을 평가한다. 시장 결과 생성은 공지 확인·네트워크 API를 기다리지 않는다.
 
-처음 보는 업비트 공식 공지는 별도 큐에서 공식 공개 API로 확인한다. 캐시에 없을 때만 확인하고 동일 공지 결과는 7일간 재사용한다. 동시에 최대 2건, 실패는 30초 후 재시도, 미지원 형식은 5분 후 재확인한다. 결과가 없는 동안 `WAITING_OFFICIAL_IDENTITY`다. 모든 신원 API 조회를 생략하면서 처음 보는 토큰까지 검증됐다고 취급하는 기능은 없다.
+처음 보는 업비트 공식 공지는 별도 큐에서 공식 공개 API로 확인한다. 캐시에 없을 때만 확인하고 동일 공지 결과는 7일간 재사용한다. 동시에 최대 2건, 실패는 30초 후 재시도, 미지원 형식은 5분 후 재확인한다. 이 확인 결과는 신원 정보로만 첨부되며 경로 판정을 기다리게 하지 않는다. 결과 상태는 항상 `ROUTE_FILTER_EVALUATED`다.
 
 업비트 지원 파서는 실제 NMR 공지의 단일 종목·Ethereum 표·입출금망 문장·종목에 연결된 전체 CA 문장만 읽는다. 본문에서 첫 주소를 주워 쓰지 않는다. 다중 종목·미지 형식·다른 네트워크·CA 충돌은 보류한다. 빗썸 및 다른 거래소 공식 공지 파서는 아직 없다.
 
@@ -26,15 +28,17 @@
 
 ## 조건과 상태
 
-- `VERIFIED`: 유효한 공식 상장 자산 근거와 매수처 통화의 동일 체인·전체 CA 일치. 원천 티커만 같거나 무기한 지수 이름이 같아서는 안 된다.
-- `NETWORK_COMPATIBLE_HELD`: CA·입금 지원망 일치, 현재 입출금 상태 등 추가 조건 확인 전.
-- `FILTER_PASSED`: 시장 ACTIVE·시장/네트워크 캐시 유효, 출금 활성·입금 활성, 알려진 출금 지연/폐지/CA 충돌 없음. 캐시 조건 필터이며 주문 가능 판정이 아니다.
+- `VERIFIED`: 참고 정보. 유효한 공식 상장 자산 근거와 매수처 통화의 동일 체인·전체 CA 일치. 경로 통과 조건이 아니다.
+- `NETWORK_COMPATIBLE_HELD`: 출금망과 상장 거래소 입금망의 체인 일치, 출금 상태·시장 상태 등 다른 조건으로 보류.
+- `FILTER_PASSED`: 시장 ACTIVE·매수 가능·시장/네트워크 캐시 유효, 출금 활성·지연 없음, 상장 거래소 입금망에 같은 체인 정확히 1개. 캐시 조건 필터이며 주문 가능 판정이 아니다.
+- 보류 사유: `DESTINATION_CURRENCY_NOT_FOUND`(상장 거래소 네트워크 목록에 코인이 아직 없음), `DESTINATION_CHAIN_NOT_SUPPORTED`(코인은 있으나 그 체인 입금 없음), `AMBIGUOUS_DESTINATION_CHAIN`.
+- 기록만: `contract_address`·`destination_contract_address`, `deposit_enabled`, `destination_status_realtime`. 양쪽 CA가 다르면 `warnings:['CONTRACT_DIFFERS']`.
 - `AUTH_REQUIRED`: 인증 없어서 미조회. 해당 거래소가 네트워크를 지원하지 않는다는 뜻이 아니다.
 - `NOT_IN_ACCOUNT_SCOPE`: 정상 API 목록에 해당 통화 없음. KYC 법인·계정 범위 제한을 고려하며 전 세계 미지원으로 해석하지 않는다.
 
-모든 결과는 `trading_allowed:false`다. 무기한 후보는 공식 기초자산/지수 매핑 전까지 `UNVERIFIED`, 현물 전송 필터는 `NOT_APPLICABLE`이다. native 코인은 빈 CA를 신원 증거로 인정하지 않으므로 별도 검증 모델 전까지 보류한다. EVM 전체 40자리 hex·Solana 32바이트 mint만 CA 비교를 지원한다. 체인 별칭은 거래소별 정확한 allowlist이며 미지 별칭은 보류한다.
+모든 결과는 `trading_allowed:false`다. 무기한 후보는 공식 기초자산/지수 매핑 전까지 `UNVERIFIED`, 현물 전송 필터는 `NOT_APPLICABLE`이다. native 코인은 빈 CA를 신원 증거로 인정하지 않는다(경로 판정에는 영향 없음). EVM 전체 40자리 hex·Solana 32바이트 mint만 CA 비교를 지원한다. 체인 별칭은 거래소별 정확한 allowlist이며 미지 별칭은 보류한다.
 
-Upbit wallet 상태는 [공식 문서](https://docs.upbit.com/kr/reference/get-service-status)에서 수 분 지연될 수 있는 참고 정보라고 안내한다. 해당 API 값만으로 현재 입금 확정을 자동 통과시키지 않으며 `DESTINATION_STATUS_ADVISORY`로 보류한다. 실제 전송에는 추후 별도 상태 재검증·주소/메모·계정/수량 조건이 필요하다.
+Upbit wallet 상태는 [공식 문서](https://docs.upbit.com/kr/reference/get-service-status)에서 수 분 지연될 수 있는 참고 정보라고 안내한다. 입금 상태는 통과 조건이 아니므로 `deposit_enabled`·`destination_status_realtime:false`로 기록만 한다. 실제 전송에는 추후 별도 상태 재검증·주소/메모·계정/수량 조건이 필요하다.
 
 ## 인증 설정
 

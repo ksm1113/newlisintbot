@@ -73,7 +73,7 @@ function assertHeld(value, reason) {
 test('The local official anchor and matching CA/chain produce an eligible cached route without trading permission', () => {
   const cache = catalog();
   const value = enrichResult(result(), cache, [anchor()], now);
-  assert.equal(value.status, 'IDENTITY_AND_ROUTE_FILTER_EVALUATED');
+  assert.equal(value.status, 'ROUTE_FILTER_EVALUATED');
   assert.equal(value.eligible_spot_count, 1);
   assert.equal(value.assets[0].identity_status, 'LISTED_ASSET_VERIFIED');
   const selected = value.assets[0].candidates[0];
@@ -94,13 +94,15 @@ test('The local official anchor and matching CA/chain produce an eligible cached
   assert.deepEqual(value.dex_spot, { status: 'NOT_QUERIED' });
 });
 
-test('Ticker collisions with a different CA cannot gain verified identity or pass the route filter', () => {
+test('A different CA does not block a ticker+chain route; it is recorded as a warning without verified identity', () => {
   const value = evaluate({ source: coin('bitget', { networks: [network({ contract_address: otherCa })] }) });
-  assertHeld(value, 'CONTRACT_MISMATCH');
+  assert.equal(value.route_filter_passed, true);
+  assert.deepEqual(value.routes[0].warnings, ['CONTRACT_DIFFERS']);
   assert.equal(value.identity_status, 'UNVERIFIED');
   assert.equal(value.asset_id, null);
-  assert.equal(value.routes[0].network_compatible, false);
+  assert.equal(value.routes[0].network_compatible, true);
   assert.equal(value.routes[0].identity_status, 'UNVERIFIED');
+  assert.equal(value.trading_allowed, false);
 });
 
 test('Unknown chain aliases and native blank CA remain unverified even when both status flags are active', () => {
@@ -109,15 +111,16 @@ test('Unknown chain aliases and native blank CA remain unverified even when both
   assert.equal(unknown.identity_status, 'UNVERIFIED');
   assert.equal(unknown.routes[0].chain_id, null);
   const blank = evaluate({ source: coin('bitget', { networks: [network({ contract_address: '' })] }) });
-  assertHeld(blank, 'FULL_CONTRACT_REQUIRED');
+  assert.equal(blank.route_filter_passed, true);
+  assert.equal(blank.routes[0].contract_address, null);
   assert.equal(blank.identity_status, 'UNVERIFIED');
   assert.equal(blank.asset_id, null);
 });
 
-test('A matching CA on a different chain does not inherit the listing asset identity', () => {
+test('A source chain the listing venue does not accept is held, and does not inherit the listing asset identity', () => {
   const value = evaluate({ source: coin('bitget', { networks: [network({ network_code: 'BEP20' })] }) });
-  assertHeld(value, 'CONTRACT_MISMATCH');
-  assertHeld(value, 'DESTINATION_NETWORK_UNSUPPORTED');
+  assertHeld(value, 'DESTINATION_CHAIN_NOT_SUPPORTED');
+  assert.equal(value.routes[0].network_compatible, false);
   assert.equal(value.identity_status, 'UNVERIFIED');
   assert.equal(value.routes[0].chain_id, 'eip155:56');
 });
@@ -136,50 +139,51 @@ test('Withdrawal disabled, unknown, or delayed statuses hold compatible verified
   }
 });
 
-test('Destination deposit disabled or unknown holds a compatible route, while a wrong full CA is rejected', () => {
-  for (const [fields, reason] of [
-    [{ deposit_enabled: false }, 'DEPOSIT_DISABLED'],
-    [{ deposit_enabled: null }, 'DEPOSIT_STATUS_UNKNOWN'],
-    [{ contract_address: otherCa }, 'DESTINATION_CONTRACT_MISMATCH'],
-    [{ contract_address: '0x1234' }, 'DESTINATION_CONTRACT_MISMATCH'],
+test('Destination deposit status and CA are recorded only; a supported chain passes without an anchor', () => {
+  for (const [fields, deposit, warnings] of [
+    [{ deposit_enabled: false }, false, []],
+    [{ deposit_enabled: null }, null, []],
+    [{ contract_address: otherCa }, true, ['CONTRACT_DIFFERS']],
+    [{ contract_address: '0x1234' }, true, []],
   ]) {
-    const value = evaluate({ destination: coin('gate', { networks: [network({ network_code: 'ETH', ...fields })] }) });
-    assertHeld(value, reason);
-    assert.equal(value.routes[0].route_filter_passed, false);
+    const value = evaluate({ proof: null, destination: coin('gate', { networks: [network({ network_code: 'ETH', ...fields })] }) });
+    assert.equal(value.routes[0].route_filter_passed, true);
+    assert.equal(value.routes[0].deposit_enabled, deposit);
+    assert.deepEqual(value.routes[0].warnings, warnings);
+    assert.equal(value.identity_status, 'UNVERIFIED');
+    assert.equal(value.trading_allowed, false);
   }
 });
 
-test('Only officially supported destination chains are compatible, and duplicate aliases remain ambiguous', () => {
-  const ethereumOnly = anchor({ contracts: [
-    { chain_id: eth, contract_address: ca, token_kind: 'TOKEN' },
-    { chain_id: sol, contract_address: solCa, token_kind: 'TOKEN' },
-  ], deposit_networks: [eth] });
-  const wrongNetwork = evaluate({ proof: ethereumOnly,
+test('Only chains in the listing venue network list are compatible, and duplicate aliases remain ambiguous', () => {
+  const wrongNetwork = evaluate({ proof: null,
     source: coin('bitget', { networks: [network({ network_code: 'SOL', contract_address: solCa })] }) });
-  assertHeld(wrongNetwork, 'DESTINATION_NETWORK_UNSUPPORTED');
+  assertHeld(wrongNetwork, 'DESTINATION_CHAIN_NOT_SUPPORTED');
   assert.equal(wrongNetwork.routes[0].network_compatible, false);
   const duplicate = evaluate({ destination: coin('gate', { networks: [network({ network_code: 'ETH' }), network()] }) });
   assertHeld(duplicate, 'AMBIGUOUS_DESTINATION_CHAIN');
 });
 
-test('A supported destination chain outside the current account scope is held separately from unsupported identity', () => {
+test('A listed coin missing from the listing venue network list is held until that venue publishes it', () => {
   const value = evaluate({ destination: coin('gate', { networks: [], currency_status: 'NOT_IN_ACCOUNT_SCOPE' }) });
-  assertHeld(value, 'DESTINATION_CHAIN_NOT_IN_ACCOUNT_SCOPE');
-  assert.equal(value.routes[0].network_compatible, true);
-  assert.equal(value.route_status, 'NETWORK_COMPATIBLE_HELD');
+  assertHeld(value, 'DESTINATION_CURRENCY_NOT_FOUND');
+  assert.equal(value.routes[0].network_compatible, false);
+  assert.equal(value.route_status, 'HELD');
 });
 
-test('Upbit advisory wallet metadata with an unknown deposit status records compatibility and stays held', () => {
+test('Upbit advisory wallet metadata with an unknown deposit status passes on the supported chain and records the advisory', () => {
   const upbitNotice = 'https://upbit.com/service_center/notice?id=synthetic-test';
   const value = evaluate({ listingExchange: 'upbit', proof: anchor({ exchange: 'upbit', source_url: upbitNotice }),
     destination: coin('upbit', { source: 'https://api.upbit.com/v1/status/wallet',
       networks: [network({ network_code: 'ETH', contract_address: null, deposit_enabled: null,
         status_realtime: false, status_notice: 'SYNTHETIC_ADVISORY_METADATA' })] }) });
-  assertHeld(value, 'DEPOSIT_STATUS_UNKNOWN');
-  assertHeld(value, 'DESTINATION_STATUS_ADVISORY');
-  assert.equal(value.route_status, 'NETWORK_COMPATIBLE_HELD');
+  assert.equal(value.route_status, 'FILTER_PASSED');
   assert.equal(value.routes[0].network_compatible, true);
+  assert.equal(value.routes[0].deposit_enabled, null);
+  assert.equal(value.routes[0].destination_status_realtime, false);
+  assert.equal(value.routes[0].destination.status_notice, 'SYNTHETIC_ADVISORY_METADATA');
   assert.equal(value.routes[0].identity_status, 'VERIFIED');
+  assert.equal(value.trading_allowed, false);
 });
 
 test('Stale, unauthenticated, failed and unqueried network catalogs never pass even if they retain old flags', () => {
@@ -261,15 +265,20 @@ test('Perpetual candidates remain unverified without derivative underlying evide
   assert.deepEqual(cache.calls, []);
 });
 
-test('Missing official evidence stays pending without any wallet read or implied order permission', () => {
+test('Without official CA evidence the route is still evaluated by ticker and chain, with identity left unverified', () => {
   const cache = catalog();
   const value = enrichResult(result(), cache, [], now);
-  assert.equal(value.status, 'WAITING_OFFICIAL_IDENTITY');
-  assert.equal(value.eligible_spot_count, 0);
+  assert.equal(value.status, 'ROUTE_FILTER_EVALUATED');
+  assert.equal(value.eligible_spot_count, 1);
   assert.equal(value.assets[0].identity_status, 'UNVERIFIED');
-  assertHeld(value.assets[0].candidates[0], 'OFFICIAL_IDENTITY_ANCHOR_REQUIRED');
-  assert.deepEqual(cache.calls, []);
+  assert.equal(value.assets[0].anchor, null);
+  const selected = value.assets[0].candidates[0];
+  assert.equal(selected.route_status, 'FILTER_PASSED');
+  assert.equal(selected.identity_status, 'UNVERIFIED');
+  assert.equal(selected.asset_id, null);
+  assert.deepEqual(cache.calls, [{ venue: 'bitget', symbol: 'TEST' }, { venue: 'gate', symbol: 'TEST' }]);
   assert.equal(value.trading_allowed, false);
+  assert.equal(selected.trading_allowed, false);
 });
 
 test('Official anchor validation rejects unconfirmed, native, unbound, duplicate and malformed evidence', () => {
@@ -294,9 +303,10 @@ test('Official anchor validation rejects unconfirmed, native, unbound, duplicate
 test('Expired/future official anchors and conflicting feed contracts cannot verify a listing', () => {
   for (const fields of [{ confirmed_at: iso(1) }, { valid_until: iso(0) }, { valid_until: iso(-1) }]) {
     const value = enrichResult(result(), catalog(), [anchor(fields)], now);
-    assert.equal(value.status, 'WAITING_OFFICIAL_IDENTITY');
-    assert.equal(value.eligible_spot_count, 0);
+    assert.equal(value.status, 'ROUTE_FILTER_EVALUATED');
     assert.equal(value.assets[0].anchor, null);
+    assert.equal(value.assets[0].identity_status, 'UNVERIFIED');
+    assert.equal(value.assets[0].candidates[0].asset_id, null);
   }
   const conflicted = { symbol: 'TEST', contracts: [{ chain_id: eth, contract_address: otherCa }], candidates: [candidate()] };
   assert.equal(selectAnchor([anchor()], result(), conflicted, now), null);
@@ -312,10 +322,10 @@ test('Matching duplicate proofs are reusable; expired/future and conflicting pro
   assert.equal(selectAnchor([expiredConflict, futureConflict, current], result(), asset, now), current);
   const currentConflict = anchor({ contracts: [{ chain_id: eth, contract_address: otherCa, token_kind: 'TOKEN' }] });
   assert.equal(selectAnchor([current, currentConflict], result(), asset, now), null);
-  const held = enrichResult(result(), catalog(), [current, currentConflict], now);
-  assert.equal(held.eligible_spot_count, 0);
-  assert.equal(held.assets[0].anchor, null);
-  assertHeld(held.assets[0].candidates[0], 'OFFICIAL_IDENTITY_ANCHOR_REQUIRED');
+  const conflicted = enrichResult(result(), catalog(), [current, currentConflict], now);
+  assert.equal(conflicted.assets[0].anchor, null);
+  assert.equal(conflicted.assets[0].candidates[0].identity_status, 'UNVERIFIED');
+  assert.equal(conflicted.assets[0].candidates[0].asset_id, null);
 });
 
 test('An exact notice proof takes precedence over a matching venue asset proof, while conflicting bindings stay held', () => {
@@ -329,14 +339,13 @@ test('An exact notice proof takes precedence over a matching venue asset proof, 
   assert.equal(selectAnchor([venueConflict, noticeProof], result(), asset, now), null);
 });
 
-test('Direct candidate verification validates proof binding and dates before reading wallet metadata', () => {
+test('Direct candidate verification ignores expired or unbound proofs for identity and rejects malformed proofs before wallet reads', () => {
   for (const fields of [{ valid_until: iso(0) }, { valid_until: iso(-1) }, { confirmed_at: iso(1) },
     { exchange: 'upbit' }, { symbol: 'OTHER' }]) {
-    const cache = catalog();
-    const value = verifyCandidate(candidate(), anchor(fields), cache, 'gate', 'TEST', now);
-    assertHeld(value, 'OFFICIAL_IDENTITY_ANCHOR_INVALID_OR_EXPIRED');
+    const value = verifyCandidate(candidate(), anchor(fields), catalog(), 'gate', 'TEST', now);
     assert.equal(value.identity_status, 'UNVERIFIED');
-    assert.deepEqual(cache.calls, []);
+    assert.equal(value.asset_id, null);
+    assert.equal(value.route_filter_passed, true);
   }
   for (const fields of [{ confirmed: false }, { confirmed_at: 'invalid' }, { valid_until: 'invalid' }]) {
     const cache = catalog();

@@ -74,7 +74,7 @@ async function main(args=process.argv.slice(2)) {
       reasons:c.reasons,routes:c.routes})));
     report.compatible_spot_count=enriched.assets.reduce((n,a)=>n+a.compatible_spot_candidates.length,0);
     report.eligible_spot_count=enriched.eligible_spot_count;
-    report.status=report.catalog.fresh_segments === report.catalog.total_segments && enriched.assets[0].anchor &&
+    report.status=report.catalog.fresh_segments === report.catalog.total_segments &&
       report.networks.filter(n=>['bitget','gate'].includes(n.venue)).every(n=>n.status === 'OK')?'PASSED_WITH_AUTH_HOLDS':'PARTIAL';
   }catch(error){report.error=error.cause?.code || error.code || error.message;}
   finally {
